@@ -22,7 +22,7 @@ def BioWebScraper(search_term):
     filename = 'keyword_output.csv' # Creates CSV file name
     csvfile = open(filename,'w',newline='',encoding='utf-8') # Open new CSV file 
     csvwriter = csv.writer(csvfile, delimiter='|') # Create CSV write object
-    header = ['PMID','PaperTitle','Authors','PublicationDate','Abstract']
+    header = ['PMID','PaperTitle','Authors','PublicationDate','Abstract', 'Keywords']
     csvwriter.writerow(header) #Create header line
 
     #Get UIDs from Pubmed
@@ -47,12 +47,12 @@ def BioWebScraper(search_term):
                                   retmode='xml')
         except:
             try:
-                time.sleep(10) # Pad 60 second wait if HTML reject to not spam PubMed
+                time.sleep(10) # Pad 10 second wait if HTML reject to not spam PubMed
                 entry = Entrez.efetch(db='pubmed',
                                       id=record,
                                       retmode='xml')
             except: 
-                time.sleep(30) # Pad 60 second wait if HTML reject to not spam PubMed
+                time.sleep(30) # Pad 30 second wait if HTML reject to not spam PubMed
                 entry = Entrez.efetch(db='pubmed',
                                       id=record,
                                       retmode='xml')
@@ -136,9 +136,23 @@ def BioWebScraper(search_term):
         if soup.find("PMID"):
             pmid = soup.find("PMID").get_text()
         
+        # Get Keywords
+        keylist = ''
+        try:
+            keywords = soup.find("KeywordList").find_all("Keyword")
+        except:
+            logging.info('No keywords listed. Not a journal/article. PMID: %s',soup.find('PMID').get_text())
+            continue
+        for keyword in keywords:
+            try:
+                kwd = keyword.get_text()
+            except:
+                kwd = 'Keyword issue'
+                logging.info('Kwd issue, review this article. PMID: %s',soup.find('PMID').get_text())
+            keylist = f"{keylist}{kwd}; "
         
         # Create CSV Entry
-        journal = [pmid,article_title,namelist,pub_date,abstract]
+        journal = [pmid,article_title,namelist,pub_date,abstract, keylist]
         csvwriter.writerow(journal)
         # Add some wait time
         delay = 0.200 # 200ms delay time
