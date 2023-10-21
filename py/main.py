@@ -12,6 +12,11 @@ from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QLineEdit, QPush
 from PyQt5.QtCore import Qt
 import json
 from scraper import BaseScraper, PubMedScraper
+from pandasgui import show
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtMultimediaWidgets import QVideoWidget
+from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtCore import QUrl
 
 class ScraperGUI(QWidget):
     def __init__(self):
@@ -20,7 +25,13 @@ class ScraperGUI(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout()
-
+        
+        # Initialize the video player
+        self.media_player = QMediaPlayer(self)
+        self.video_widget = QVideoWidget(self)
+        layout.addWidget(self.video_widget)
+        self.media_player.setVideoOutput(self.video_widget)
+        
         # Input fields
         self.email_input = QLineEdit(self)
         self.email_input.setPlaceholderText("Enter email")
@@ -50,6 +61,10 @@ class ScraperGUI(QWidget):
         self.load_config_button = QPushButton("Load Config", self)
         self.load_config_button.clicked.connect(self.load_config)
         layout.addWidget(self.load_config_button)
+        
+        self.view_df_button = QPushButton("View DataFrame in PandasGUI", self)
+        self.view_df_button.clicked.connect(self.view_dataframe_in_pandasgui)
+        layout.addWidget(self.view_df_button)
 
         # Table for DataFrame
         self.table = QTableWidget(self)
@@ -60,6 +75,13 @@ class ScraperGUI(QWidget):
         layout.addWidget(self.progress_bar)
 
         self.setLayout(layout)
+
+    def play_video(self, video_path):
+        if not video_path:
+            QMessageBox.warning(self, "Error", "Unable to find video file!")
+            return
+        self.media_player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
+        self.media_player.play()    
 
     def start_scraping(self):
         # Set up logging
@@ -72,12 +94,22 @@ class ScraperGUI(QWidget):
         mindate = self.mindate_input.text()
         maxdate = self.maxdate_input.text()
 
+
+        # Play the video
+        self.play_video("resources/scrapingPleaseWait.mp4")
+        
         # Initialize the PubMedScraper
         scraper = PubMedScraper(search_term, email, api_key)
 
         # Scrape data
         df = scraper.scrape(progress_callback=self.update_progress, mindate=mindate, maxdate=maxdate)
+        
+        # Store the DataFrame as an instance variable
+        self.df = df
 
+        # Stop the animation after scraping
+        self.media_player.stop()
+        
         # Display the scraped data in the GUI table
         self.display_dataframe(df)
 
@@ -96,6 +128,17 @@ class ScraperGUI(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setWordWrap(True)
 
+
+    def view_dataframe_in_pandasgui(self):
+        # Stop the video when scraping is done
+        self.media_player.stop()
+        
+        if hasattr(self, 'df') and not self.df.empty:
+            show(self.df)
+        else:
+            # Handle the case where the DataFrame hasn't been scraped yet or is empty
+            # You can show a message box or some notification here
+            pass
 
     def save_config(self):
         config = {
