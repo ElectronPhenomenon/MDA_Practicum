@@ -10,7 +10,7 @@ from Bio import Entrez
 import pandas as pd
 
 class BaseScraper:
-    def __init__(self, search_term, config):
+    def __init__(self, search_term, config={}):
         self.search_term = search_term
         self.config = config
         self.setup_logging()
@@ -80,13 +80,16 @@ class BaseScraper:
     def scrape(self):
         raise NotImplementedError
 
-class PubMedScraper(BaseScraper):
-    def __init__(self, search_term, email, api_key, config=None):
+class EntrezScraper(BaseScraper):
+    
+    def __init__(self, search_term, email, api_key, dbase, config=None):  # Added dbase parameter
         super().__init__(search_term, config)
         self.email = email
         self.api_key = api_key
+        self.dbase = dbase  # Set the database as an instance variable
         Entrez.email = self.email
         Entrez.api_key = self.api_key
+        self.current_delay = 0.5
         if self.config:  # Check if config is not None
             Entrez.sleep_between_tries = self.config.get('sleep_between_tries', 30)
             Entrez.max_tries = self.config.get('max_tries', 10)
@@ -94,13 +97,20 @@ class PubMedScraper(BaseScraper):
             Entrez.sleep_between_tries = 30
             Entrez.max_tries = 10
 
-    def search_pubmed(self, dbase='pubmed', mindate=None, maxdate=None, datetype='pdat', sort='most+recent'):
-        handle = Entrez.esearch(db=dbase, term=self.search_term, mindate=mindate, maxdate=maxdate, datetype=datetype)
-        records = Entrez.read(handle)
-        count = records['Count']
-        handle = Entrez.esearch(db=dbase, term=self.search_term, retmax=count, mindate=mindate, maxdate=maxdate, datetype=datetype, sort=sort)
-        records = Entrez.read(handle)
-        return records
+    def search_dbase(self, mindate=None, maxdate=None, datetype='pdat', sort='most+recent'):
+        try:
+            handle = Entrez.esearch(db=self.dbase, term=self.search_term, mindate=mindate, maxdate=maxdate, datetype=datetype)
+            records = Entrez.read(handle)
+            handle.close()  # Close the handle
+
+            count = records['Count']
+            handle = Entrez.esearch(db=self.dbase, term=self.search_term, retmax=count, mindate=mindate, maxdate=maxdate, datetype=datetype, sort=sort)
+            records = Entrez.read(handle)
+            handle.close()  # Close the handle
+            return records
+        except Exception as e:
+            logging.error(f"Error searching database {self.dbase} with term {self.search_term}. Error: {e}")
+            return {}  # Return an empty dictionary if there's an error
 
     def fetch_article(self, record_id, retries=2, **kwargs):
         if retries <= 0:
@@ -108,14 +118,21 @@ class PubMedScraper(BaseScraper):
             return None
         try:
             db = kwargs.get('db', 'pubmed')
+            time.sleep(self.current_delay)  # Add the dynamic delay here
             entry = Entrez.efetch(db=db, id=record_id, retmode='xml')
             result = entry.read()
             soup = BeautifulSoup(result, "xml")
+            
+            # Successful request, decrease the delay
+            self.current_delay = max(0.1, self.current_delay - 0.1)
             return soup
         except Exception as e:
             logging.error(f"Error fetching article with ID: {record_id}. Error: {e}")
-            time.sleep(10)
-            return self.fetch_article(record_id, retries-1, **kwargs)
+            
+            # Error or rejection, increase the delay
+            self.current_delay += 0.5
+            time.sleep(10)  # This is a static delay after an error, can be adjusted
+            return self.fetch_article(record_id, retries-1, **kwargs) if retries > 1 else None
     
     def extract_paper_title(self, soup):
         return soup.find("ArticleTitle").get_text() if soup.find("ArticleTitle") else None
@@ -142,6 +159,15 @@ class PubMedScraper(BaseScraper):
 
     def extract_pubmed_id(self, soup):
         return soup.find("PMID").get_text() if soup.find("PMID") else None
+
+    def extract_doi(self, soup):
+        doi_tag = soup.find("ELocationID", EIdType="doi")
+        return doi_tag.get_text() if doi_tag else None
+
+    def extract_publication_type(self, soup):
+        publication_types = soup.find_all("PublicationType")
+        types = [pub_type.get_text() for pub_type in publication_types]
+        return "; ".join(types) if types else None
 
     def extract_keywords(self, soup):
         keywords = [kw.get_text() for kw in soup.find_all("Keyword")]
@@ -177,6 +203,9 @@ class PubMedScraper(BaseScraper):
             'Publication Date': self.extract_publication_date(soup),
             'Abstract': self.extract_abstract(soup),
             'PubMed ID': self.extract_pubmed_id(soup),
+            'DOI': self.extract_doi(soup),  # Add this line
+            'Source': self.dbase,  # Add this line to identify the source
+            'Publication Types': self.extract_publication_type(soup),
             'Keywords': self.extract_keywords(soup),
             'MeSH Terms': self.extract_mesh_terms(soup),
             'Related Articles': self.get_related_articles(pmid)  # Fetch related articles for the given pmid
@@ -184,7 +213,16 @@ class PubMedScraper(BaseScraper):
         return data
     
     def scrape(self, progress_callback=None, **kwargs):
-        search_results = self.search_pubmed(**kwargs)
+        search_results = self.search_dbase(**kwargs)
+        if "IdList" not in search_results:
+            logging.error(f"IdList key missing in search results for query: {self.search_term}")
+            raise ValueError("IdList key missing in search results.")  # Raise an error
+        
+        # Check if "IdList" is in the search results and handle if not
+        if "IdList" not in search_results:
+            logging.error(f"IdList key missing in search results for query: {self.search_term}")
+            return pd.DataFrame()  # Return an empty DataFrame
+    
         id_list = search_results["IdList"]
         
         papers_data = []
@@ -199,3 +237,18 @@ class PubMedScraper(BaseScraper):
         df = pd.DataFrame(papers_data)
         
         return df
+
+class PubMedScraper(EntrezScraper):
+    def __init__(self, search_term, email, api_key, config=None):
+        super().__init__(search_term, email, api_key, dbase='pubmed', config=config)  # Set dbase to 'pubmed'
+
+
+class PubMedCentralScraper(EntrezScraper):
+    def __init__(self, search_term, email, api_key, config=None):
+        super().__init__(search_term, email, api_key, dbase='pmc', config=config)  # Set dbase to 'pmc'
+
+
+
+
+
+

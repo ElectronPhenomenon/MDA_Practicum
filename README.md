@@ -1,55 +1,102 @@
 # MDA_Practicum Readme
-Python-based utility to support evidence-based strategies for cancer prevention and control in Texas. UTHSC Practicum project in collaboration with MD Anderson
 
-# Web Scraping
+## Introduction
+MDA_Practicum is a Python-based utility developed to support evidence-based strategies for cancer prevention and control in Texas. This tool, a collaboration between UTHSC and MD Anderson, provides an efficient way to scrape and analyze articles from PubMed.
 
-The `BioWebScraper` function queries PubMed for articles containing the keyword or keywords provided as an argument to BioWebScraper. The function does not return any values, but will export a CSV file populated with UTF-8 formatted data. Scraping takes anywhere between 30 minutes to an hour to complete, depending on how busy the PubMed server is. Delays are built into the querying code to prevent overload of PubMed.
+## Web Scraping with `EntrezScraper`
 
-## Imported Libraries:
+### Overview
+The `EntrezScraper` class is designed to interface with the PubMed database, querying for articles based on specified keyword(s). The results are then processed and can be exported to various formats, such as CSV. The scraping process is optimized to respect PubMed's server load, incorporating dynamic throttling to adjust request speeds based on server responses.
 
-- `sys`: [Python system library for system functions](https://docs.python.org/3/library/sys.html)
-- `logging`: [Logging library to generate a log file under CapstoneScraper.log](https://docs.python.org/3/library/logging.html)
-- `gc`: [Garbage collection library to help clean up memory](https://docs.python.org/3/library/gc.html)
-- `csv`: [CSV parsing library for read/writing to CSV file](https://docs.python.org/3/library/csv.html)
-- `datetime`: [Date and time library. Used to generate a file name for the scraped data](https://docs.python.org/3/library/datetime.html)
-- `requests`: [HTML interface library for connecting to a given URL](https://requests.readthedocs.io/en/latest/)
-- `bs4`: [Beautiful Soup library, for scraping HTML/XML data](https://www.crummy.com/software/BeautifulSoup/bs4/doc/)
-- `re`: [Regular expression library, for parsing regex text search/replace functions](https://docs.python.org/3/library/re.html)
-- `Bio`: [Biopython, with the Entrez module as the primary interface to the PubMed database](https://biopython.org/)
-- `tqmd`: [Progress meter for the main scraping loop](https://tqdm.github.io/)
+### Imported Libraries:
+(As previously mentioned)
 
-## Code Structure:
+### Code Structure & Details:
 
-1. Create and open CSV file.
-2. Create and open log.
-3. Connect to PubMed via API key and search for the given keyword and date range.
-4. Create a list of PMIDs records based on the search results.
-5. Iterate a for loop over the search results, and query PubMed for details on each entry. Parse into the CSV file. Use the pipe character "|" as the delimiter for this code, as the comma shows up in many of the Author and Abstract queries (which causes issues for comma delimitation).
+#### `EntrezScraper` Class:
 
-### Data Extraction:
+1. **Initialization (`__init__`)**:
+   - Set up the scraper with necessary parameters like search terms, email, API key, and the specific database to query.
+   - Configure default and custom delay settings for dynamic throttling.
 
-- **Paper title**: Beautiful soup searches (find) XML for instances of `<ArticleTitle>`. If no article title is found for the given PMID, “No article title found” is logged with the given PMID, and the loop iterates to the next PMID with continue.
-- **Authors**: Beautiful soup searches (find_all) XML for instances of `<AuthorList>` with cases of `<Author, ValidYN=”Y”>`. A for loop is used to iterate over the list of authors returned. A try / except condition is used in this loop. If an author exists, their name is parsed based on an if / then condition (for instances of incomplete author names). If no author list is found, “No authors listed. Not a journal/article.” is logged with the given PMID and the loop iterates to the next PMID with continue.
-- **Publication date**: Beautiful soup searches (find) XML for instances of `<ArticleDate>`. This was chosen over `<PubDate>` to attempt to capture better date ranges inside the search filter to PubMed. Regex is used to capture dates of varying format. If no article date exists, the loop iterates to find the next PMID with continue.
-- **Abstract**: Beautiful soup searches (find) XML for instances of `<AbstractText>`. The abstract text is captured. If no abstract exists, “No abstract.” is logged with the given PMID, along with being written into the CSV file.
+2. **Database Search (`search_dbase`)**:
+   - Connect to PubMed and search for articles based on the provided search term and date range.
+   - Retrieve a list of PMIDs based on the search results.
 
-If a PMID satisfies all conditions above, write the entry to the CSV file and index to the next line. Bypass and log, or simply log, entries that do not meet criteria (see above for criteria). Close the CSV file and report complete. Details in the CapstoneScraper.log will capture any PubMed ID that is bypassed by the code, either because of article title or author issues. Some entries will not have an abstract, and will also be captured by the log.
+3. **Article Fetching (`fetch_article`)**:
+   - For each PMID, fetch detailed article data.
+   - Implement retries in case of failed fetch attempts.
 
-# SQLite Database
+4. **Data Extraction Methods**:
+   - Methods like `extract_paper_title`, `extract_authors`, etc., parse the XML data to retrieve specific details about each article.
 
-The following steps were taken to create a database module that imports the CSV file from the Web Scraping module as a data frame, generates a new database in SQLiteStudio, and queries the database using SQL code to identify all publications for a given author’s name. The author’s name is determined by the user upon the module’s request for input.
+5. **Dynamic Throttling**:
+   - Adjust the delay between requests based on server responses, ensuring efficient scraping without overloading the server.
 
-1. Import all packages necessary for the module to run: `sqlite3` and `pandas`.
-2. Import the CSV file from the Web Scraping module as a data frame using the “read_csv” function in the pandas library.
-3. Create an object that establishes and connects to a new empty database using the “connect” function in the sqlite3 library.
-4. Use the “cursor” function to create an object that executes SQL commands in the Python module to query the new database.
-5. Store the records from the data frame in a new table in the SQL database using the “to_sql” function.
-6. Implement a while loop that prompts the user to input an author’s name to search the database. The output is a data frame containing all article titles that included the given name in their associated list of authors.
+6. **Scraping (`scrape`)**:
+   - Orchestrates the entire scraping process, from searching the database to extracting data for each article.
+   - Results are structured into a DataFrame.
 
-The while loop makes use of the functions:
-- “input” - To allow the user to enter a specific name to search the database for.
-- “execute” - To execute the SQL query.
-- “fetchall” - To collect all results of the query.
-- “DataFrame” - To store and format the query results in a pandas data frame object.
+### For Python Developers:
 
-Print the output of the final data frame containing the list of articles associated with the given author’s name. Continue to prompt the user for an author’s name after each output is printed until the user enters “quit”.
+#### `EntrezScraper` Class:
+
+- **Initialization Parameters**:
+  - `search_term`: The keyword or phrase to search for.
+  - `email`: Your email, required by PubMed for API access.
+  - `api_key`: Your PubMed API key.
+  - `dbase`: The specific PubMed database to query (e.g., "pubmed").
+  - `config`: Optional configuration for custom delay settings.
+
+- **Methods**:
+  - `search_dbase`: Searches the specified database for articles matching the search term.
+  - `fetch_article`: Fetches detailed data for a specific article based on its PMID.
+  - Various `extract_` methods: Extract specific details from the XML data of an article.
+  - `scrape`: The main method to initiate the scraping process.
+
+#### `ScraperGUI` Class:
+
+- **Initialization**:
+  - Set up the GUI layout and components.
+
+- **Event Handling**:
+  - Define actions for various events like button clicks.
+
+- **Threading**:
+  - Implement multi-threading to ensure the GUI remains responsive during the scraping process.
+
+- **Data Aggregation**:
+  - As scraping threads complete their tasks, their results are aggregated into a main DataFrame.
+
+- **Error Handling**:
+  - Handle potential errors gracefully, displaying relevant messages to the user.
+
+### For Non-Python Users:
+
+#### Using the `ScraperGUI`:
+
+1. **Launching the GUI**:
+   - After the Python environment is set up, run the `main.py` script. This will launch the GUI.
+
+2. **Config File**:
+   - Before starting, ensure you have a configuration file set up. This file contains important settings like your PubMed API key and email. If you're unsure about this, consult the developer or administrator.
+
+3. **Starting the Scraper**:
+   - Input your desired search term into the GUI.
+   - Click the "Start Scraping" button. You'll see a progress bar indicating the scraping progress.
+
+4. **Viewing Results**:
+   - Once scraping is complete, you can view the results directly within the GUI.
+   - For a more detailed view, consider using tools like PandasGUI to explore the resulting DataFrame.
+
+5. **Error Messages**:
+   - If there are any issues during scraping, relevant error messages will be displayed in the GUI. This helps you understand if there's a problem with the server, your internet connection, or other issues.
+
+6. **Stopping the Scraper**:
+   - If you wish to halt the scraping process, simply click the "Stop Scraping" button.
+
+7. **Exporting Data**:
+   - The scraped data can be exported to various formats, such as CSV, directly from the GUI.
+
+## Conclusion
+MDA_Practicum offers a robust and user-friendly solution for scraping PubMed articles. Whether you're a Python developer or someone just looking to gather data, this tool provides an efficient and streamlined experience.
