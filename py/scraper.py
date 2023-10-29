@@ -8,6 +8,10 @@ import asyncio
 import aiohttp
 from Bio import Entrez
 import pandas as pd
+import clarivate.wos_journals.client
+from clarivate.wos_journals.client.api import journals_api
+from clarivate.wos_journals.client.model.journal_list import JournalList
+
 
 class BaseScraper:
     def __init__(self, search_term, config={}):
@@ -246,6 +250,116 @@ class PubMedScraper(EntrezScraper):
 class PubMedCentralScraper(EntrezScraper):
     def __init__(self, search_term, email, api_key, config=None):
         super().__init__(search_term, email, api_key, dbase='pmc', config=config)  # Set dbase to 'pmc'
+        
+class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its methods
+    # TODOs in the WoSJournalScraper:
+    # 1. The extract_authors, extract_abstract, extract_doi, extract_publication_type, 
+    #    extract_keywords, extract_mesh_terms, and get_related_articles methods are 
+    #    placeholders. They need to be implemented based on the data available from WoS.
+    # 2. The WoS API might not provide all the data that Entrez provides, so some methods 
+    #    might remain unimplemented or will need a different approach.
+    # 3. The get_related_articles method might need to use the JournalsCiting and 
+    #    JournalsCited endpoints to get related articles.
+
+    def __init__(self, search_term, api_key):  
+        super().__init__(search_term)
+        self.configuration = clarivate.wos_journals.client.Configuration()
+        self.configuration.api_key['key'] = api_key
+        self.api_client = clarivate.wos_journals.client.ApiClient(self.configuration)
+        self.api_instance = journals_api.JournalsApi(self.api_client)
+
+    def fetch_articles(self, query):
+        all_articles = []
+        page = 1
+        while True:
+            try:
+                response = self.api_instance.journals_get(q=query, limit=50, page=page)
+                all_articles.extend(response.hits)
+                if len(response.hits) < 50:  # Exit loop if less than 50 articles are returned
+                    break
+                page += 1
+            except clarivate.wos_journals.client.ApiException as e:
+                print(f"Exception on page {page}: {e}")
+                break
+        return all_articles
+
+    def extract_paper_title(self, journal_record):
+        return journal_record.title
+
+    # TODO: Fetch detailed article information to extract authors
+    def extract_authors(self, journal_record):
+        pass
+
+    def extract_publication_date(self, journal_record):
+        return journal_record.cover_date
+
+    # TODO: Fetch detailed article information to extract abstract
+    def extract_abstract(self, journal_record):
+        pass
+
+    def extract_pubmed_id(self, journal_record):
+        # WoS doesn't provide PubMed ID, using ISSN as an identifier
+        return journal_record.issn or journal_record.eissn
+
+    # TODO: Fetch detailed article information to extract DOI
+    def extract_doi(self, journal_record):
+        pass
+
+    def extract_source(self, journal_record):
+        return journal_record.publisher_name
+
+    # TODO: Fetch detailed article information or categorize based on other attributes
+    def extract_publication_type(self, journal_record):
+        pass
+
+    # TODO: Fetch detailed article information to extract keywords
+    def extract_keywords(self, journal_record):
+        pass
+
+    # TODO: Fetch detailed article information or use another source to get MeSH terms
+    def extract_mesh_terms(self, journal_record):
+        pass
+
+    # TODO: Use the JournalsCiting and JournalsCited endpoints
+    def get_related_articles(self, journal_record):
+        pass
+
+    def extract_data(self, journal_record):
+        data = {
+            'Paper Title': self.extract_paper_title(journal_record),
+            'Authors': self.extract_authors(journal_record),
+            'Publication Date': self.extract_publication_date(journal_record),
+            'Abstract': self.extract_abstract(journal_record),
+            'PubMed ID': self.extract_pubmed_id(journal_record),
+            'DOI': self.extract_doi(journal_record),
+            'Source': self.extract_source(journal_record),
+            'Publication Types': self.extract_publication_type(journal_record),
+            'Keywords': self.extract_keywords(journal_record),
+            'MeSH Terms': self.extract_mesh_terms(journal_record),
+            'Related Articles': self.get_related_articles(journal_record)
+        }
+        return data
+    
+    def scrape(self, query, progress_callback=None):
+        # Fetch articles based on the query
+        search_results = self.fetch_articles(query)
+        
+        # Check if search results are empty
+        if not search_results:
+            logging.error(f"No articles found for query: {query}")
+            return pd.DataFrame()  # Return an empty DataFrame
+        
+        papers_data = []
+        for index, journal_record in enumerate(self.progress_bar(search_results, desc="Scraping articles")):
+            paper_data = self.extract_data(journal_record)
+            papers_data.append(paper_data)
+            if progress_callback:
+                progress_callback(index + 1, len(search_results))
+        
+        df = pd.DataFrame(papers_data)
+        
+        return df
+    
 
 
 
