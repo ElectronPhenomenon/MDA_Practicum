@@ -19,18 +19,20 @@ from PyQt5 import QtWidgets
 from PyQt5.QtGui import QMovie
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QProgressBar, QCheckBox, QInputDialog, QMessageBox, QLabel)
-from PyQt5.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QSequentialAnimationGroup, pyqtSignal, QThread
+from PyQt5.QtCore import Qt, QPropertyAnimation, QSequentialAnimationGroup, pyqtSignal, QThread
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.fernet import Fernet
 import base64
-from scraper import BaseScraper, PubMedScraper, PubMedCentralScraper, WoSJournalScraper
+from scraper import PubMedScraper, PubMedCentralScraper, WoSJournalScraper
 from pandasgui import show
+from preprocesser import ArticlePreprocessor
+import ast
 
 #Logging Config
 log_format = "%(asctime)s - %(levelname)s - %(message)s"
-logging.basicConfig(level=logging.DEBUG, format=log_format)
+logging.basicConfig(level=logging.WARNING, format=log_format)
 
 class EntrezScrapingThread(QThread):
     scrapingCompleted = pyqtSignal(pd.DataFrame)
@@ -56,6 +58,9 @@ class EntrezScrapingThread(QThread):
                 raise ValueError(f"Unknown scraper type: {self.scraper_type}")
 
             df = scraper.scrape(progress_callback=self.update_progress, mindate=self.mindate, maxdate=self.maxdate)
+            # Check for interruption request
+            if self.isInterruptionRequested():
+                return
             self.scrapingCompleted.emit(df)
         except Exception as e:
             self.scrapingError.emit(str(e))  # Emit the error message
@@ -78,6 +83,9 @@ class WoSScrapingThread(QThread):
             scraper = WoSJournalScraper(self.api_key)
             df = scraper.scrape(self.query)
             self.scrapingCompleted.emit(df)
+            # Check for interruption request
+            if self.isInterruptionRequested():
+                return
         except Exception as e:
             self.scrapingError.emit(str(e))  # Emit the error message
     
@@ -93,6 +101,9 @@ class ScraperGUI(QWidget):
         self.init_ui()
         self.threads = []
         self.main_df = pd.DataFrame()
+        # Initialize a dictionary to track progress of each scraper thread
+        self.scraper_progress = {}
+        self.buffered_progress = {}
 
     def init_ui(self):
         layout = QVBoxLayout()
@@ -226,9 +237,21 @@ class ScraperGUI(QWidget):
         self.load_config_button.clicked.connect(self.load_config)
         layout.addWidget(self.load_config_button)
         
+        self.save_csv_button = QPushButton("Save to CSV", self)
+        self.save_csv_button.clicked.connect(self.save_to_csv)
+        layout.addWidget(self.save_csv_button)
+        
+        self.load_csv_button = QPushButton("Load CSV", self)
+        self.load_csv_button.clicked.connect(self.load_from_csv)
+        layout.addWidget(self.load_csv_button)
+        
         self.view_df_button = QPushButton("View DataFrame in PandasGUI", self)
         self.view_df_button.clicked.connect(self.view_dataframe_in_pandasgui)
         layout.addWidget(self.view_df_button)
+        
+        self.preprocess_button = QPushButton("Preprocess Data", self)
+        self.preprocess_button.clicked.connect(self.preprocess_data)
+        layout.addWidget(self.preprocess_button)
         
         # Scraper Checkboxes
         self.pubmed_checkbox = QCheckBox("PubMed", self)
@@ -274,6 +297,10 @@ class ScraperGUI(QWidget):
         # Resize GUI
         self.resize(self.movie.scaledSize().width(), self.movie.scaledSize().height())
         
+        #Reset scraper progress dictionary
+        # Initialize a dictionary to track progress of each scraper thread
+        self.scraper_progress = {}
+        
         # Start the loading message animation
         self.start_animation()
         
@@ -306,7 +333,7 @@ class ScraperGUI(QWidget):
             
         if self.wos_checkbox.isChecked():
             query = self.search_term.text()
-            api_key = self.api_key_input.text()
+            wos_api_key = self.api_key_input.text()
             wos_thread = WoSScrapingThread(wos_api_key, query)
             wos_thread.scrapingCompleted.connect(self.on_scraping_completed)
             wos_thread.scrapingError.connect(self.on_scraping_error)  # Connect the error signal
@@ -320,16 +347,13 @@ class ScraperGUI(QWidget):
             
     def on_scraping_error(self, error_message):
         QMessageBox.critical(self, "Error", f"An error occurred during scraping: {error_message}")
-        
-    def closeEvent(self, event):
-        # This method is called when the widget is closed
-        for thread in self.threads:
-            if thread.isRunning():
-                thread.terminate()
-                thread.wait()
-        super().closeEvent(event)
 
     def on_scraping_completed(self, df):
+        # Check if all threads have completed
+        if all(not thread.isRunning() for thread in self.threads):
+            # Stop the animation after scraping
+            self.stop_gif()
+        
         # Check if the returned dataframe is not empty
         if not df.empty:
             # Check if self.main_df exists and if not, initialize it with the new df
@@ -344,9 +368,6 @@ class ScraperGUI(QWidget):
         else:
             logging.warning(f"No data returned from the scraper for query: {self.search_term.text()}")
             QMessageBox.warning(self, "Warning", "No data was returned. Please check your search term or try again later.")
-        
-        # Stop the animation after scraping
-        self.stop_gif()
 
     def display_dataframe(self, df):
         self.table.setRowCount(df.shape[0])
@@ -360,7 +381,27 @@ class ScraperGUI(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setWordWrap(True)
 
-
+    def save_to_csv(self):
+        filepath, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save DataFrame", "", "CSV Files (*.csv);;All Files (*)")
+        if filepath:
+            self.main_df.to_csv(filepath, index=False)
+    
+    def load_from_csv(self):
+        filepath, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load DataFrame", "", "CSV Files (*.csv);;All Files (*)")
+        if filepath:
+            try:
+                self.main_df = pd.read_csv(filepath)
+                
+                # Specify the data type for the "PubMed ID" column as string
+                self.main_df = pd.read_csv(filepath, dtype={"PubMed ID": str})
+                
+                # Convert 'related articles' from string to list using ast.literal_eval
+                self.main_df['Related Articles'] = self.main_df['Related Articles'].apply(ast.literal_eval)
+                
+                QMessageBox.information(self, "Info", "Data loaded successfully!")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load data. Error: {e}")
+        
     def view_dataframe_in_pandasgui(self):
         # Check if the main dataframe exists and is not empty
         if hasattr(self, 'main_df') and not self.main_df.empty:
@@ -526,7 +567,46 @@ class ScraperGUI(QWidget):
         self.progress_bar.setValue(current)
         
     def handle_progress(self, current, total):
-       self.progress_bar.setValue(self.progress_bar.value() + current)  
+        # Get the name of the calling thread
+        thread_name = QThread.currentThread().objectName()
+
+        # Update the progress of the current scraper thread
+        self.scraper_progress[thread_name] = (current, total)
+
+        # Buffer the progress values
+        if thread_name not in self.buffered_progress:
+            self.buffered_progress[thread_name] = (current, total)
+        else:
+            prev_current, prev_total = self.buffered_progress[thread_name]
+            buffered_current = (prev_current + current) / 2
+            buffered_total = (prev_total + total) / 2
+            self.buffered_progress[thread_name] = (buffered_current, buffered_total)
+
+        # Calculate the average progress using the buffered values
+        total_current = sum([progress[0] for progress in self.buffered_progress.values()])
+        total_max = sum([progress[1] for progress in self.buffered_progress.values()])
+
+        # Update the main progress bar
+        self.progress_bar.setMaximum(total_max)
+        self.progress_bar.setValue(total_current)
+        
+        # Check if all threads have completed
+        if all(not thread.isRunning() for thread in self.threads):
+            self.progress_bar.setValue(self.progress_bar.maximum())
+
+    def preprocess_data(self):
+        preprocessor = ArticlePreprocessor()
+        self.main_df = preprocessor.preprocess(self.main_df)
+        
+        # Query the articles using the search term from self.search_term
+        query = self.search_term.text()
+        if query:
+            result_df = preprocessor.query_articles(query)
+            # Display the result in the GUI table
+            self.main_df = result_df
+            QMessageBox.information(self, "Info", "Data preprocessed and queried successfully!")
+        else:
+            QMessageBox.warning(self, "Warning", "Please enter a search term before preprocessing.")
 
     def closeEvent(self, event):
         if any(thread.isRunning() for thread in self.threads):

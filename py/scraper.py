@@ -11,6 +11,7 @@ import pandas as pd
 import clarivate.wos_journals.client
 from clarivate.wos_journals.client.api import journals_api
 from clarivate.wos_journals.client.model.journal_list import JournalList
+from PyQt5.QtCore import QThread
 
 
 class BaseScraper:
@@ -231,6 +232,10 @@ class EntrezScraper(BaseScraper):
         
         papers_data = []
         for index, record_id in enumerate(self.progress_bar(id_list, desc="Scraping articles")):
+            if QThread.currentThread().isInterruptionRequested():
+                logging.info("Scraping interrupted.")
+                break
+            
             soup = self.fetch_article(record_id, **kwargs)
             if soup:
                 paper_data = self.extract_data(soup, record_id)
@@ -351,6 +356,10 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
         
         papers_data = []
         for index, journal_record in enumerate(self.progress_bar(search_results, desc="Scraping articles")):
+            if QThread.currentThread().isInterruptionRequested():
+                logging.info("Scraping interrupted.")
+                break
+                
             paper_data = self.extract_data(journal_record)
             papers_data.append(paper_data)
             if progress_callback:
@@ -359,10 +368,3 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
         df = pd.DataFrame(papers_data)
         
         return df
-    
-
-
-
-
-
-
