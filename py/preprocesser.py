@@ -60,7 +60,7 @@ class ArticlePreprocessor:
         self.articles_df['Related Articles'] = self.articles_df.apply(self._clean_related_articles, axis=1)
     
         # Combine 'Abstract' and 'Paper Title' for better context
-        self.articles_df['Combined Text'] = self.articles_df['Abstract'] + ' ' + self.articles_df['Paper Title']
+        self.articles_df['Combined Text'] = self.articles_df['Abstract'] + ' ' + self.articles_df['Paper Title'] + ' ' + self.articles_df['MeSH Terms'] + ' ' + self.articles_df['Keywords']
     
         # Clean the combined text
         self.articles_df['Combined Text'] = self.articles_df['Combined Text'].apply(self._clean_text)

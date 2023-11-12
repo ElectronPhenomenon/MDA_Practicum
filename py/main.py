@@ -18,7 +18,7 @@ import binascii
 from PyQt5 import QtWidgets
 from PyQt5.QtGui import QMovie
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, QPushButton, QTableWidget, QTableWidgetItem, 
-                             QHeaderView, QProgressBar, QCheckBox, QInputDialog, QMessageBox, QLabel)
+                             QHeaderView, QProgressBar, QCheckBox, QInputDialog, QMessageBox, QLabel, QHBoxLayout)
 from PyQt5.QtCore import Qt, QPropertyAnimation, QSequentialAnimationGroup, pyqtSignal, QThread
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -104,15 +104,25 @@ class ScraperGUI(QWidget):
         # Initialize a dictionary to track progress of each scraper thread
         self.scraper_progress = {}
         self.buffered_progress = {}
-
+        
+        #Application name
+        QApplication.setApplicationName("LLaMBIT")
+        
+        
     def init_ui(self):
-        layout = QVBoxLayout()
+        main_layout = QVBoxLayout()
+        buttons_layout = QHBoxLayout()
+        buttons_scrape = QVBoxLayout()
+        buttons_config = QVBoxLayout()
+        buttons_csv = QVBoxLayout()
+        buttons_pandas = QVBoxLayout()
+        buttons_process = QVBoxLayout()
         
         # Initialize the GIF player
         self.movie = QMovie("resources/scrapingPleaseWait.gif")
         self.gif_label = QLabel(self)
         self.gif_label.setMovie(self.movie)
-        layout.addWidget(self.gif_label)
+        main_layout.addWidget(self.gif_label)
         
         # Loading messages
         self.loading_messages = [
@@ -172,7 +182,7 @@ class ScraperGUI(QWidget):
         
         # QLabel for displaying loading messages
         self.message_label = QLabel(self)
-        layout.addWidget(self.message_label)
+        main_layout.addWidget(self.message_label)
         
         # Set up opacity effect for fade-in and fade-out
         self.opacity_effect = QtWidgets.QGraphicsOpacityEffect(self.message_label)
@@ -199,79 +209,110 @@ class ScraperGUI(QWidget):
         self.messageChanged.connect(self.start_animation)
         
         # Input fields
+        input_layout = QVBoxLayout()  # Separate layout for input fields
         self.search_term = QLineEdit(self)
         self.search_term.setPlaceholderText("Enter search query:")
-        layout.addWidget(self.search_term)
+        input_layout.addWidget(self.search_term)
                 
         self.email_input = QLineEdit(self)
         self.email_input.setPlaceholderText("Enter email:")
-        layout.addWidget(self.email_input)
+        input_layout.addWidget(self.email_input)
 
         # Input fields for API keys
         self.entrez_api_key_input = QLineEdit(self)
         self.entrez_api_key_input.setPlaceholderText("Enter Entrez API Key:")
-        layout.addWidget(self.entrez_api_key_input)
+        input_layout.addWidget(self.entrez_api_key_input)
 
         self.wos_api_key_input = QLineEdit(self)
         self.wos_api_key_input.setPlaceholderText("Enter WoS API Key:")
-        layout.addWidget(self.wos_api_key_input)
+        input_layout.addWidget(self.wos_api_key_input)
 
         self.mindate_input = QLineEdit(self)
         self.mindate_input.setPlaceholderText("Enter start date (YYYY/MM/DD):")
-        layout.addWidget(self.mindate_input)
+        input_layout.addWidget(self.mindate_input)
 
         self.maxdate_input = QLineEdit(self)
         self.maxdate_input.setPlaceholderText("Enter end date (YYYY/MM/DD):")
-        layout.addWidget(self.maxdate_input)
-
+        input_layout.addWidget(self.maxdate_input)
+        
+        main_layout.addLayout(input_layout)  # Add the input fields layout to the main layout
+        
         # Buttons
+        buttons_layout = QHBoxLayout()
+        
         self.scrape_button = QPushButton("Start Scraping", self)
         self.scrape_button.clicked.connect(self.start_scraping)
-        layout.addWidget(self.scrape_button)
+        buttons_scrape.addWidget(self.scrape_button)
+
+        
+        self.stop_scrape_button = QPushButton("Stop Scraping", self)
+        self.stop_scrape_button.clicked.connect(self.stop_scraping)
+        buttons_scrape.addWidget(self.stop_scrape_button)
+
 
         self.save_config_button = QPushButton("Save Config", self)
         self.save_config_button.clicked.connect(self.save_config)
-        layout.addWidget(self.save_config_button)
+        buttons_config.addWidget(self.save_config_button)
+
 
         self.load_config_button = QPushButton("Load Config", self)
         self.load_config_button.clicked.connect(self.load_config)
-        layout.addWidget(self.load_config_button)
+        buttons_config.addWidget(self.load_config_button)
+
         
         self.save_csv_button = QPushButton("Save to CSV", self)
         self.save_csv_button.clicked.connect(self.save_to_csv)
-        layout.addWidget(self.save_csv_button)
+        buttons_csv.addWidget(self.save_csv_button)
+
         
         self.load_csv_button = QPushButton("Load CSV", self)
         self.load_csv_button.clicked.connect(self.load_from_csv)
-        layout.addWidget(self.load_csv_button)
+        buttons_csv.addWidget(self.load_csv_button)
+
         
         self.view_df_button = QPushButton("View DataFrame in PandasGUI", self)
         self.view_df_button.clicked.connect(self.view_dataframe_in_pandasgui)
-        layout.addWidget(self.view_df_button)
+        buttons_pandas.addWidget(self.view_df_button)
+ 
         
         self.preprocess_button = QPushButton("Preprocess Data", self)
         self.preprocess_button.clicked.connect(self.preprocess_data)
-        layout.addWidget(self.preprocess_button)
+        buttons_process.addWidget(self.preprocess_button)
+        
+        self.relatedarticles_button = QPushButton("Gather Related Articles", self)
+        self.relatedarticles_button.clicked.connect(self.gather_related_articles)
+        buttons_process.addWidget(self.relatedarticles_button)
+        
+        # Organize button layout
+        buttons_layout.addLayout(buttons_scrape)
+        buttons_layout.addLayout(buttons_config)
+        buttons_layout.addLayout(buttons_csv)
+        buttons_layout.addLayout(buttons_pandas)
+        buttons_layout.addLayout(buttons_process)
+        main_layout.addLayout(buttons_layout)
         
         # Scraper Checkboxes
+        checkboxes_layout = QVBoxLayout()  # Separate layout for checkboxes
         self.pubmed_checkbox = QCheckBox("PubMed", self)
-        layout.addWidget(self.pubmed_checkbox)
+        checkboxes_layout.addWidget(self.pubmed_checkbox)
         
         self.pubmed_central_checkbox = QCheckBox("PubMed Central", self)
-        layout.addWidget(self.pubmed_central_checkbox)
+        checkboxes_layout.addWidget(self.pubmed_central_checkbox)
         
         self.wos_checkbox = QCheckBox("Web of Science", self)
-        layout.addWidget(self.wos_checkbox)
+        checkboxes_layout.addWidget(self.wos_checkbox)
+        
+        main_layout.addLayout(checkboxes_layout)
         
         # Table for DataFrame
         self.table = QTableWidget(self)
-        layout.addWidget(self.table)
+        main_layout.addWidget(self.table)
         
         # Progress meter
         self.progress_bar = QProgressBar(self)
-        layout.addWidget(self.progress_bar)
+        main_layout.addWidget(self.progress_bar)
 
-        self.setLayout(layout)
+        self.setLayout(main_layout)
 
     def play_gif(self):
         self.movie.start()
@@ -345,6 +386,21 @@ class ScraperGUI(QWidget):
         total_progress = len(self.threads) * 100  # Assuming each thread contributes a maximum of 100 units
         self.progress_bar.setMaximum(total_progress)
             
+    def stop_scraping(self):
+        # Request all running threads to stop
+        for thread in self.threads:
+            if thread.isRunning():
+                thread.requestInterruption()
+        
+        # Optionally, you can disable the stop button until all threads have actually stopped
+        self.stop_scrape_button.setDisabled(True)
+        for thread in self.threads:
+            thread.wait()  # Wait for the thread to finish
+        self.stop_scrape_button.setDisabled(False)
+    
+        # Inform the user that the scraping has been stopped
+        QMessageBox.information(self, "Scraping Stopped", "The scraping process has been stopped.")
+    
     def on_scraping_error(self, error_message):
         QMessageBox.critical(self, "Error", f"An error occurred during scraping: {error_message}")
 
@@ -437,7 +493,12 @@ class ScraperGUI(QWidget):
             'entrez_api_key': encrypted_entrez_api_key,
             'wos_api_key': encrypted_wos_api_key,
             'mindate': self.mindate_input.text(),
-            'maxdate': self.maxdate_input.text()
+            'maxdate': self.maxdate_input.text(),
+            'scrapers': {
+                'pubmed': self.pubmed_checkbox.isChecked(),
+                'pubmed_central': self.pubmed_central_checkbox.isChecked(),
+                'wos': self.wos_checkbox.isChecked()
+            }
         }
         
         with open('config.json', 'w') as f:
@@ -465,13 +526,20 @@ class ScraperGUI(QWidget):
                 except Fernet.InvalidToken:
                     QMessageBox.critical(self, "Error", "Failed to decrypt the API keys. Please ensure you're using the correct passphrase.")
                     return
-    
+                if 'scrapers' in config:
+                    self.pubmed_checkbox.setChecked(config['scrapers'].get('pubmed', False))
+                    self.pubmed_central_checkbox.setChecked(config['scrapers'].get('pubmed_central', False))
+                    self.wos_checkbox.setChecked(config['scrapers'].get('wos', False))
+                    
                 self.search_term.setText(config['search_term'])
                 self.email_input.setText(config['email'])
                 self.entrez_api_key_input.setText(decrypted_entrez_api_key)
                 self.wos_api_key_input.setText(decrypted_wos_api_key)
                 self.mindate_input.setText(config['mindate'])
                 self.maxdate_input.setText(config['maxdate'])
+                self.pubmed_checkbox.setChecked(config['scrapers']['pubmed'])
+                self.pubmed_central_checkbox.setChecked(config['scrapers']['pubmed_central'])
+                self.wos_checkbox.setChecked(config['scrapers']['wos'])
         except FileNotFoundError:
             QMessageBox.warning(self, "Warning", "Config file not found!")
         except json.JSONDecodeError:
@@ -607,6 +675,9 @@ class ScraperGUI(QWidget):
             QMessageBox.information(self, "Info", "Data preprocessed and queried successfully!")
         else:
             QMessageBox.warning(self, "Warning", "Please enter a search term before preprocessing.")
+
+    def gather_related_articles(self):
+        pass
 
     def closeEvent(self, event):
         if any(thread.isRunning() for thread in self.threads):

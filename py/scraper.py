@@ -1,4 +1,3 @@
-
 import csv
 import logging
 import time
@@ -345,7 +344,7 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
         }
         return data
     
-    def scrape(self, query, progress_callback=None):
+    def scrape(self, query, progress_callback=None, max_records=None, **kwargs):
         # Fetch articles based on the query
         search_results = self.fetch_articles(query)
         
@@ -356,8 +355,8 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
         
         papers_data = []
         for index, journal_record in enumerate(self.progress_bar(search_results, desc="Scraping articles")):
-            if QThread.currentThread().isInterruptionRequested():
-                logging.info("Scraping interrupted.")
+            if QThread.currentThread().isInterruptionRequested() or (max_records is not None and index >= max_records):
+                logging.info("Scraping interrupted or max_records reached.")
                 break
                 
             paper_data = self.extract_data(journal_record)
