@@ -60,8 +60,16 @@ class ArticlePreprocessor:
         self.articles_df['Related Articles'] = self.articles_df.apply(self._clean_related_articles, axis=1)
     
         # Combine 'Abstract' and 'Paper Title' for better context
-        self.articles_df['Combined Text'] = self.articles_df['Abstract'] + ' ' + self.articles_df['Paper Title'] + ' ' + self.articles_df['MeSH Terms'] + ' ' + self.articles_df['Keywords']
-    
+        self.articles_df['Combined Text'] = self.articles_df['Paper Title'] + ' ' + self.articles_df['Keywords']
+        try:
+            self.articles_df['Combined Text'] += ' ' + self.articles_df['MeSH Terms']
+        except KeyError:
+            pass
+        try:
+            self.articles_df['Combined Text'] += ' ' + self.articles_df['Abstract']
+        except KeyError:
+            pass
+        
         # Clean the combined text
         self.articles_df['Combined Text'] = self.articles_df['Combined Text'].apply(self._clean_text)
     
@@ -79,11 +87,16 @@ class ArticlePreprocessor:
         """
         Cleans the 'Related Articles' column by removing duplicates and the article's own ID.
         """
-        article_id = row['PubMed ID']
-        related_articles = set(row['Related Articles'])
-        if article_id in related_articles:
-            related_articles.remove(article_id)
-        return list(related_articles)
+        try:
+            article_id = row['PubMed ID']
+            related_articles = set(row['Related Articles'])
+            if article_id in related_articles:
+                related_articles.remove(article_id)
+            return list(related_articles)
+        except KeyError:
+            return ""
+        except TypeError:
+            return ""
 
     def _parse_query(self, query):
         """
@@ -96,7 +109,7 @@ class ArticlePreprocessor:
         or_terms = [re.sub(r'[\"\(\)]', '', term) for term in or_terms]
         return or_terms
 
-    def query_articles(self, query):
+    def query_articles(self, query, threshold=0.15):
         """
         Queries the articles based on the provided search query and returns the relevant articles.
         """
@@ -109,10 +122,33 @@ class ArticlePreprocessor:
             cosine_similarities = cosine_similarity(term_vector, self.tfidf_matrix).flatten()
             combined_scores = np.maximum(combined_scores, cosine_similarities)
 
-        # Add the Relevance Score to the dataframe
+         # Add the Relevance Score to the dataframe
         self.articles_df['Relevance Score'] = combined_scores
     
-        # Sort the dataframe based on the Relevance Score
-        sorted_df = self.articles_df.sort_values(by='Relevance Score', ascending=False)
+        # Filter articles based on the threshold
+        relevant_articles = self.articles_df[self.articles_df['Relevance Score'] > threshold]
     
-        return sorted_df
+        # Sort the dataframe based on the Relevance Score
+        sorted_df = relevant_articles.sort_values(by='Relevance Score', ascending=False)
+    
+        # Extract PubMed IDs of relevant articles
+        relevant_pubmed_ids = sorted_df['PubMed ID'].tolist()
+
+        return sorted_df, relevant_pubmed_ids
+    
+    def gather_related_articles(self):
+        """
+        Compiles all related article IDs for addition into the data frame
+
+        Returns
+        -------
+        None.
+
+        """
+        
+        existing_articles = self.articles_df["PubMed ID"]
+        related_articles = self.articles_df["Related Articles"]
+        
+        # Flatten the list of related articles and remove duplicates
+        all_related_articles = set(article_id for sublist in related_articles for article_id in sublist if article_id not in existing_articles)
+        return all_related_articles

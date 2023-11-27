@@ -29,6 +29,8 @@ from scraper import PubMedScraper, PubMedCentralScraper, WoSJournalScraper
 from pandasgui import show
 from preprocesser import ArticlePreprocessor
 import ast
+import re
+import pdb
 
 #Logging Config
 log_format = "%(asctime)s - %(levelname)s - %(message)s"
@@ -51,13 +53,45 @@ class EntrezScrapingThread(QThread):
     def run(self):
         try:
             if self.scraper_type == "PubMed":
-                scraper = PubMedScraper(self.search_term, self.email, self.api_key)
+                scraper = PubMedScraper(email=self.email, api_key=self.api_key, search_term=self.search_term)
             elif self.scraper_type == "PubMedCentral":
-                scraper = PubMedCentralScraper(self.search_term, self.email, self.api_key)
+                scraper = PubMedCentralScraper(email=self.email, api_key=self.api_key, search_term=self.search_term)
+            else:
+                raise ValueError(f"Unknown scraper type: {self.scraper_type}")
+    
+            df = scraper.scrape(progress_callback=self.update_progress, mindate=self.mindate, maxdate=self.maxdate)
+            if self.isInterruptionRequested():
+                return
+            self.scrapingCompleted.emit(df)
+        except Exception as e:
+            self.scrapingError.emit(str(e))
+
+    def update_progress(self, current, total):
+        self.progressSignal.emit(current, total)
+
+class RelatedArticlesThread(QThread):
+    scrapingCompleted = pyqtSignal(pd.DataFrame)
+    scrapingError = pyqtSignal(str)  # Signal to handle errors
+    progressSignal = pyqtSignal(int, int)  # Signal for progress updates
+
+    def __init__(self, scraper_type, email, api_key, related_ids):
+        super().__init__()
+        self.scraper_type = scraper_type
+        self.email = email
+        self.api_key = api_key
+        self.related_ids = related_ids
+
+    def run(self):
+        try:
+            if self.scraper_type == "PubMed":
+                scraper = PubMedScraper(email=self.email, api_key=self.api_key)
+            elif self.scraper_type == "PubMedCentral":
+                scraper = PubMedCentralScraper(email=self.email, api_key=self.api_key)  # Assuming PubMedCentralScraper has a similar constructor
             else:
                 raise ValueError(f"Unknown scraper type: {self.scraper_type}")
 
-            df = scraper.scrape(progress_callback=self.update_progress, mindate=self.mindate, maxdate=self.maxdate)
+            # Use the fetch_related_articles method to get data
+            df = scraper.fetch_elink_articles(self.related_ids)
             # Check for interruption request
             if self.isInterruptionRequested():
                 return
@@ -68,27 +102,27 @@ class EntrezScrapingThread(QThread):
     def update_progress(self, current, total):
         self.progressSignal.emit(current, total)
 
+
 class WoSScrapingThread(QThread):
     scrapingCompleted = pyqtSignal(pd.DataFrame)
-    scrapingError = pyqtSignal(str)  # Signal to handle errors
-    progressSignal = pyqtSignal(int, int)  # Signal for progress updates
+    scrapingError = pyqtSignal(str)
+    progressSignal = pyqtSignal(int, int)
 
-    def __init__(self, api_key, query):
+    def __init__(self, api_key, search_term):
         super().__init__()
         self.api_key = api_key
-        self.query = query
+        self.search_term = search_term
 
     def run(self):
         try:
-            scraper = WoSJournalScraper(self.api_key)
-            df = scraper.scrape(self.query)
+            scraper = WoSJournalScraper(api_key=self.api_key,search_term=self.search_term)
+            #pdb.set_trace()
+            df = scraper.scrape(self.search_term)
             self.scrapingCompleted.emit(df)
-            # Check for interruption request
-            if self.isInterruptionRequested():
-                return
         except Exception as e:
-            self.scrapingError.emit(str(e))  # Emit the error message
-    
+            logging.error(f"Error in WoSScrapingThread: {e}")
+            self.scrapingError.emit(str(e))
+
     def update_progress(self, current, total):
         self.progressSignal.emit(current, total)
         
@@ -104,6 +138,8 @@ class ScraperGUI(QWidget):
         # Initialize a dictionary to track progress of each scraper thread
         self.scraper_progress = {}
         self.buffered_progress = {}
+        self.search_related_articles = False
+        self.pmids = None
         
         #Application name
         QApplication.setApplicationName("LLaMBIT")
@@ -331,7 +367,51 @@ class ScraperGUI(QWidget):
     def start_animation(self):
         self.animation_group.start()
     
-    def start_scraping(self):
+    def convert_WoS_query(self, query):
+        # Function to format individual components
+        def format_component(component):
+            if '"' in component:  # It's a phrase
+                stripped_phrase = component.strip('\"')
+                formatted_phrase = f"ALL=({stripped_phrase})"
+                print(f"Formatted phrase: {formatted_phrase}")
+                return formatted_phrase
+            elif component.upper() in ['AND', 'OR', 'NOT']:  # Logical operator
+                print(f"Operator: {component}")
+                return component
+            else:  # Individual word
+                formatted_word = f"(ALL=({component}))"
+                print(f"Formatted word: {formatted_word}")
+                return formatted_word
+        
+        # Split the query into components (words, phrases, operators)
+        components = re.findall(r'(".*?"|\b\w+\b)', query)
+        print(f"Components: {components}")
+        
+        # Format each component and join them back together
+        formatted_query = ' '.join(format_component(comp) for comp in components)
+        print(f"Formatted query before handling ORs: {formatted_query}")
+        
+        # Special handling for OR statements
+        # Find the last occurrence of 'AND' and reformat everything after that
+        last_and_index = formatted_query.rfind('AND')
+        print(f"Last AND index: {last_and_index}")
+        if last_and_index != -1:
+            before_last_and = formatted_query[:last_and_index]
+            after_last_and = formatted_query[last_and_index:]
+            print(f"Before last AND: {before_last_and}")
+            print(f"After last AND: {after_last_and}")
+            or_statements = re.findall(r'ALL=\((.*?)\)', after_last_and)
+            print(f"OR statements: {or_statements}")
+            if or_statements:
+                grouped_or_statements = ' OR '.join(f'({stmt})' for stmt in or_statements)
+                after_last_and = f'AND ALL=({grouped_or_statements})'
+                formatted_query = before_last_and + after_last_and
+                print(f"Formatted query after grouping ORs: {formatted_query}")
+
+        # Enclose the entire query in parentheses
+        return f"({formatted_query})"
+        
+    def start_scraping(self, related_ids=None):
         # Start the GIF animation
         self.movie.start()
         
@@ -357,7 +437,7 @@ class ScraperGUI(QWidget):
         maxdate = self.maxdate_input.text()
         
         # Initialize the EntrezScrapingThread and connect its signals
-        if self.pubmed_checkbox.isChecked():
+        if self.pubmed_checkbox.isChecked() and not self.search_related_articles:
             pubmed_thread = EntrezScrapingThread("PubMed", search_term, email_input, entrez_api_key, mindate, maxdate)
             pubmed_thread.scrapingCompleted.connect(self.on_scraping_completed)
             pubmed_thread.scrapingError.connect(self.on_scraping_error)  # Connect the error signal
@@ -365,22 +445,30 @@ class ScraperGUI(QWidget):
             pubmed_thread.start()
             pubmed_thread.progressSignal.connect(self.handle_progress)
 
-        if self.pubmed_central_checkbox.isChecked():
+        if self.pubmed_central_checkbox.isChecked() and not self.search_related_articles:
             pubmed_central_thread = EntrezScrapingThread("PubMedCentral", search_term, email_input, entrez_api_key, mindate, maxdate)
             pubmed_central_thread.scrapingCompleted.connect(self.on_scraping_completed)
             self.threads.append(pubmed_central_thread)  # Add thread to the list
             pubmed_central_thread.start()
             pubmed_central_thread.progressSignal.connect(self.handle_progress)
             
-        if self.wos_checkbox.isChecked():
-            query = self.search_term.text()
-            wos_api_key = self.api_key_input.text()
-            wos_thread = WoSScrapingThread(wos_api_key, query)
+        if self.wos_checkbox.isChecked() and not self.search_related_articles:
+            search_term = self.convert_WoS_query(search_term)
+            wos_thread = WoSScrapingThread(wos_api_key, search_term)
             wos_thread.scrapingCompleted.connect(self.on_scraping_completed)
             wos_thread.scrapingError.connect(self.on_scraping_error)  # Connect the error signal
             self.threads.append(wos_thread)
             wos_thread.start()
             wos_thread.progressSignal.connect(self.handle_progress)
+            
+        if self.search_related_articles:
+            # Start RelatedArticlesThread with the related article IDs
+            related_thread = RelatedArticlesThread("PubMed", email_input, entrez_api_key, related_ids)
+            related_thread.scrapingCompleted.connect(self.on_scraping_completed)
+            related_thread.scrapingError.connect(self.on_scraping_error)
+            self.threads.append(related_thread)
+            related_thread.start()
+            related_thread.progressSignal.connect(self.handle_progress)
             
         #Progress
         total_progress = len(self.threads) * 100  # Assuming each thread contributes a maximum of 100 units
@@ -416,10 +504,13 @@ class ScraperGUI(QWidget):
             if not hasattr(self, 'main_df') or self.main_df.empty:
                 self.main_df = df
             else:
+                # Concatenate the new data frame with the existing one
+                # You might want to check for duplicates here if necessary
                 self.main_df = pd.concat([self.main_df, df], ignore_index=True)
             
             # Display the scraped data in the GUI table
             self.display_dataframe(df)
+
     
         else:
             logging.warning(f"No data returned from the scraper for query: {self.search_term.text()}")
@@ -663,21 +754,23 @@ class ScraperGUI(QWidget):
             self.progress_bar.setValue(self.progress_bar.maximum())
 
     def preprocess_data(self):
-        preprocessor = ArticlePreprocessor()
-        self.main_df = preprocessor.preprocess(self.main_df)
+        self.preprocessor = ArticlePreprocessor()
+        self.main_df = self.preprocessor.preprocess(self.main_df)
         
         # Query the articles using the search term from self.search_term
         query = self.search_term.text()
         if query:
-            result_df = preprocessor.query_articles(query)
+            result_df,relevant_pubmed_ids =self. preprocessor.query_articles(query)
             # Display the result in the GUI table
             self.main_df = result_df
+            self.pmids = relevant_pubmed_ids
             QMessageBox.information(self, "Info", "Data preprocessed and queried successfully!")
         else:
             QMessageBox.warning(self, "Warning", "Please enter a search term before preprocessing.")
 
     def gather_related_articles(self):
-        pass
+        self.search_related_articles = True
+        self.start_scraping(related_ids=self.pmids)
 
     def closeEvent(self, event):
         if any(thread.isRunning() for thread in self.threads):

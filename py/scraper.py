@@ -7,11 +7,12 @@ import asyncio
 import aiohttp
 from Bio import Entrez
 import pandas as pd
-import clarivate.wos_journals.client
-from clarivate.wos_journals.client.api import journals_api
-from clarivate.wos_journals.client.model.journal_list import JournalList
+import woslite_client
+from woslite_client.rest import ApiException
+from pprint import pprint
 from PyQt5.QtCore import QThread
-
+from tqdm import tqdm
+import pdb
 
 class BaseScraper:
     def __init__(self, search_term, config={}):
@@ -139,7 +140,7 @@ class EntrezScraper(BaseScraper):
             return self.fetch_article(record_id, retries-1, **kwargs) if retries > 1 else None
     
     def extract_paper_title(self, soup):
-        return soup.find("ArticleTitle").get_text() if soup.find("ArticleTitle") else None
+        return soup.find("ArticleTitle").get_text() if soup.find("ArticleTitle") else "No title"
 
     def extract_authors(self, soup):
         authors = []
@@ -147,7 +148,7 @@ class EntrezScraper(BaseScraper):
             last_name = author.LastName.get_text() if author.LastName else ""
             fore_name = author.ForeName.get_text() if author.ForeName else ""
             authors.append(f"{last_name}, {fore_name}")
-        return "; ".join(authors)
+        return "; ".join(authors) if authors else "No Authors"
 
     def extract_publication_date(self, soup):
         date = soup.find("ArticleDate")
@@ -156,30 +157,30 @@ class EntrezScraper(BaseScraper):
             month = date.Month.get_text() if date.Month else ""
             day = date.Day.get_text() if date.Day else ""
             return f"{year}-{month}-{day}"
-        return None
+        return "No date"
 
     def extract_abstract(self, soup):
-        return soup.find("AbstractText").get_text() if soup.find("AbstractText") else None
+        return soup.find("AbstractText").get_text() if soup.find("AbstractText") else "No Abstract"
 
     def extract_pubmed_id(self, soup):
-        return soup.find("PMID").get_text() if soup.find("PMID") else None
+        return soup.find("PMID").get_text() if soup.find("PMID") else "No PMID"
 
     def extract_doi(self, soup):
         doi_tag = soup.find("ELocationID", EIdType="doi")
-        return doi_tag.get_text() if doi_tag else None
+        return doi_tag.get_text() if doi_tag else "No DOI"
 
     def extract_publication_type(self, soup):
         publication_types = soup.find_all("PublicationType")
         types = [pub_type.get_text() for pub_type in publication_types]
-        return "; ".join(types) if types else None
+        return "; ".join(types) if types else "No pub type"
 
     def extract_keywords(self, soup):
         keywords = [kw.get_text() for kw in soup.find_all("Keyword")]
-        return "; ".join(keywords)
+        return "; ".join(keywords) if keywords else "No keywords"
 
     def extract_mesh_terms(self, soup):
         mesh_terms = [mt.DescriptorName.get_text() for mt in soup.find_all("MeshHeading")]
-        return "; ".join(mesh_terms)
+        return "; ".join(mesh_terms) if mesh_terms else "No MeSH terms"
     
     def get_related_articles(self, pmid, db="pubmed", **kwargs):
         try:
@@ -195,10 +196,40 @@ class EntrezScraper(BaseScraper):
                     related_ids.append(link["Id"])
             
             #logging.info(f"Related articles for PMID {pmid}: {related_ids}")
-            return related_ids
+            return related_ids if related_ids else "No related IDs"
         except Exception as e:
             logging.error(f"Error fetching related articles for PMID: {pmid}. Error: {e}")
             return []
+    
+    
+    def fetch_elink_articles(self, pubmed_ids):
+        all_linked_ids = []
+        for pubmed_id in tqdm(pubmed_ids, desc="Fetching related articles"):
+            if QThread.currentThread().isInterruptionRequested():
+                logging.info("Fetching interrupted.")
+                break
+            try:
+                handle = Entrez.elink(dbfrom="pubmed", id=pubmed_id, linkname="pubmed_pubmed")
+                record = Entrez.read(handle)
+                handle.close()
+    
+                if record and "LinkSetDb" in record[0]:
+                    linked = [link["Id"] for link in record[0]["LinkSetDb"][0]["Link"]]
+                    all_linked_ids.extend(linked)
+            except Exception as e:
+                logging.error(f"Error fetching related articles for PMID: {pubmed_id}. Error: {e}")
+    
+        # Remove duplicates and existing articles
+        unique_linked_ids = set(all_linked_ids)
+        unique_linked_ids -= set(pubmed_ids)
+        # Report how many new articles are found
+        print(f"Found {len(unique_linked_ids)} unique linked IDs after the elink process.")
+        # Now call scrape method to get detailed information for each related article
+        if unique_linked_ids:
+            return self.scrape(related_search=True, related_ids=unique_linked_ids)
+        else:
+            return pd.DataFrame()  # Return an empty DataFrame if no related articles are found
+
 
     def extract_data(self, soup, pmid):
         data = {
@@ -216,19 +247,21 @@ class EntrezScraper(BaseScraper):
         }
         return data
     
-    def scrape(self, progress_callback=None, **kwargs):
-        search_results = self.search_dbase(**kwargs)
-        if "IdList" not in search_results:
-            logging.error(f"IdList key missing in search results for query: {self.search_term}")
-            raise ValueError("IdList key missing in search results.")  # Raise an error
+    def scrape(self, progress_callback=None,related_search=False, related_ids = None, **kwargs):
+        if not related_search:
+            search_results = self.search_dbase(**kwargs)
+            if "IdList" not in search_results:
+                logging.error(f"IdList key missing in search results for query: {self.search_term}")
+                raise ValueError("IdList key missing in search results.")  # Raise an error
+            
+            # Check if "IdList" is in the search results and handle if not
+            if "IdList" not in search_results:
+                logging.error(f"IdList key missing in search results for query: {self.search_term}")
+                return pd.DataFrame()  # Return an empty DataFrame
         
-        # Check if "IdList" is in the search results and handle if not
-        if "IdList" not in search_results:
-            logging.error(f"IdList key missing in search results for query: {self.search_term}")
-            return pd.DataFrame()  # Return an empty DataFrame
-    
-        id_list = search_results["IdList"]
-        
+            id_list = search_results["IdList"]
+        if related_search:
+            id_list = related_ids
         papers_data = []
         for index, record_id in enumerate(self.progress_bar(id_list, desc="Scraping articles")):
             if QThread.currentThread().isInterruptionRequested():
@@ -247,12 +280,12 @@ class EntrezScraper(BaseScraper):
         return df
 
 class PubMedScraper(EntrezScraper):
-    def __init__(self, search_term, email, api_key, config=None):
+    def __init__(self, email, api_key, search_term=None, config=None):
         super().__init__(search_term, email, api_key, dbase='pubmed', config=config)  # Set dbase to 'pubmed'
 
 
 class PubMedCentralScraper(EntrezScraper):
-    def __init__(self, search_term, email, api_key, config=None):
+    def __init__(self, email, api_key, search_term=None, config=None):
         super().__init__(search_term, email, api_key, dbase='pmc', config=config)  # Set dbase to 'pmc'
         
 class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its methods
@@ -265,82 +298,92 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
     # 3. The get_related_articles method might need to use the JournalsCiting and 
     #    JournalsCited endpoints to get related articles.
 
-    def __init__(self, search_term, api_key):  
-        super().__init__(search_term)
-        self.configuration = clarivate.wos_journals.client.Configuration()
-        self.configuration.api_key['key'] = api_key
-        self.api_client = clarivate.wos_journals.client.ApiClient(self.configuration)
-        self.api_instance = journals_api.JournalsApi(self.api_client)
+    def __init__(self, api_key, search_term, database_id='WOS'):
+        super().__init__(search_term, api_key)
+        self.configuration = self.configure_api(api_key)
+        self.search_api_instance = self.init_search_api()
+        self.database_id = database_id
+        self.search_term = search_term
+        
+    def configure_api(self, api_key):
+        configuration = woslite_client.Configuration()
+        configuration.api_key['X-ApiKey'] = api_key
+        return configuration
 
-    def fetch_articles(self, query):
+    def init_search_api(self):
+        return woslite_client.SearchApi(woslite_client.ApiClient(self.configuration))
+
+    def fetch_articles(self, search_term, count=50, first_record=1):
         all_articles = []
-        page = 1
+        page = first_record
         while True:
             try:
-                response = self.api_instance.journals_get(q=query, limit=50, page=page)
-                all_articles.extend(response.hits)
-                if len(response.hits) < 50:  # Exit loop if less than 50 articles are returned
+                api_response = self.search_api_instance.root_get(self.database_id, self.search_term, count, page)
+                pprint(api_response)
+                articles = api_response.data
+                all_articles.extend(articles)
+                if len(articles) < count:
                     break
-                page += 1
-            except clarivate.wos_journals.client.ApiException as e:
-                print(f"Exception on page {page}: {e}")
+                page += count
+            except ApiException as e:
+                logging.error(f"Exception on page {page}: {e}")
                 break
         return all_articles
 
     def extract_paper_title(self, journal_record):
-        return journal_record.title
+        if journal_record.title and journal_record.title.title:
+            return journal_record.title.title[0]
+        return "No title"
 
-    # TODO: Fetch detailed article information to extract authors
+    
     def extract_authors(self, journal_record):
-        pass
-
+        return ', '.join(journal_record.author.authors) if journal_record.author and journal_record.author.authors else "No authors"
+    
     def extract_publication_date(self, journal_record):
-        return journal_record.cover_date
+        month = journal_record.source.published_biblio_date[0] if journal_record.source and journal_record.source.published_biblio_date else "N/A"
+        year = journal_record.source.published_biblio_year[0] if journal_record.source and journal_record.source.published_biblio_year else "N/A"
+        return f"{month} {year}".strip()
 
-    # TODO: Fetch detailed article information to extract abstract
-    def extract_abstract(self, journal_record):
-        pass
-
-    def extract_pubmed_id(self, journal_record):
-        # WoS doesn't provide PubMed ID, using ISSN as an identifier
-        return journal_record.issn or journal_record.eissn
-
-    # TODO: Fetch detailed article information to extract DOI
+    
+    def extract_WoS_id(self, journal_record):
+        return journal_record.ut if journal_record.ut  else "No WoS ID"
+    
     def extract_doi(self, journal_record):
-        pass
-
+        if journal_record.other and journal_record.other.identifier_doi:
+            return journal_record.other.identifier_doi[0]
+        return "No DOI"
+    
     def extract_source(self, journal_record):
-        return journal_record.publisher_name
-
-    # TODO: Fetch detailed article information or categorize based on other attributes
+        return "Web of Science"
+    
     def extract_publication_type(self, journal_record):
-        pass
-
-    # TODO: Fetch detailed article information to extract keywords
+        return ', '.join(journal_record.doctype.doctype) if journal_record.doctype else "No pub type"
+    
     def extract_keywords(self, journal_record):
-        pass
-
-    # TODO: Fetch detailed article information or use another source to get MeSH terms
-    def extract_mesh_terms(self, journal_record):
-        pass
-
-    # TODO: Use the JournalsCiting and JournalsCited endpoints
-    def get_related_articles(self, journal_record):
-        pass
-
+        return ', '.join(journal_record.keyword.keywords) if journal_record.keyword.keywords else "No keywords"
+    
+    def extract_abstract(self,journal_record):
+        return "No abstract"
+    
+    def extract_mesh(self,journal_record):
+        return "No MeSH terms"
+    
+    def extract_related(self,journal_record):
+        return "No related articles"
+    
     def extract_data(self, journal_record):
         data = {
             'Paper Title': self.extract_paper_title(journal_record),
             'Authors': self.extract_authors(journal_record),
             'Publication Date': self.extract_publication_date(journal_record),
             'Abstract': self.extract_abstract(journal_record),
-            'PubMed ID': self.extract_pubmed_id(journal_record),
-            'DOI': self.extract_doi(journal_record),
-            'Source': self.extract_source(journal_record),
+            'PubMed ID': self.extract_WoS_id(journal_record),
+            'DOI': self.extract_doi(journal_record),  # Add this line
+            'Source': self.extract_source(journal_record),  # Add this line to identify the source
             'Publication Types': self.extract_publication_type(journal_record),
             'Keywords': self.extract_keywords(journal_record),
-            'MeSH Terms': self.extract_mesh_terms(journal_record),
-            'Related Articles': self.get_related_articles(journal_record)
+            'MeSH Terms': self.extract_mesh(journal_record),
+            'Related Articles': self.extract_related(journal_record)  # Fetch related articles for the given pmid
         }
         return data
     
@@ -354,7 +397,7 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
             return pd.DataFrame()  # Return an empty DataFrame
         
         papers_data = []
-        for index, journal_record in enumerate(self.progress_bar(search_results, desc="Scraping articles")):
+        for index, journal_record in enumerate(search_results):
             if QThread.currentThread().isInterruptionRequested() or (max_records is not None and index >= max_records):
                 logging.info("Scraping interrupted or max_records reached.")
                 break
