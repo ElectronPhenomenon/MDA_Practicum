@@ -7,13 +7,43 @@ Created on Sun Oct  8 16:47:57 2023
 LLaMBIT: Library linked automated medical bibliographic information tool
 """
 
+#First-time Start Logic
+
+import subprocess
+import os
+import pkg_resources
+import time
+required_packages = {'pandasgui', 'tqdm', 'pandas', 'nltk', 'beautifulsoup4', 'aiohttp', 'cryptography', 'pyqt5', 'scikit-learn', 'biopython', 'numpy'}
+
+def check_install_dependencies():
+    installed_packages = {pkg.key for pkg in pkg_resources.working_set}
+    missing_packages = required_packages - installed_packages
+    if missing_packages:
+        print("Missing packages detected. Installing dependencies...")
+        subprocess.call(["firstStart.bat"], shell=True)
+        # Check if installation was successful
+        if os.path.exists('install_success.txt'):
+            with open('install_success.txt', 'r') as file:
+                status = file.read().strip()
+                if status == 'Success':
+                    print("Dependencies installed successfully.")
+                else:
+                    print("Error installing dependencies.")
+                    sys.exit(1)
+            os.remove('install_success.txt')  # Clean up if no error.
+        else:
+            print("Installation status unknown.")
+            sys.exit(1)
+
+check_install_dependencies()
+
+
 import sys
 import logging
 import pandas as pd
 import random
 import json
 import hashlib
-import os
 import binascii
 from PyQt5 import QtWidgets
 from PyQt5.QtGui import QMovie
@@ -30,11 +60,11 @@ from pandasgui import show
 from preprocesser import ArticlePreprocessor
 import ast
 import re
-import pdb
 
 #Logging Config
 log_format = "%(asctime)s - %(levelname)s - %(message)s"
-logging.basicConfig(level=logging.WARNING, format=log_format)
+logging.basicConfig(level=logging.DEBUG, format=log_format)
+logging.info("Application started")
 
 class EntrezScrapingThread(QThread):
     scrapingCompleted = pyqtSignal(pd.DataFrame)
@@ -49,23 +79,30 @@ class EntrezScrapingThread(QThread):
         self.api_key = api_key
         self.mindate = mindate
         self.maxdate = maxdate
+        
 
     def run(self):
+        logging.info(f"{self.__class__.__name__} started")
         try:
             if self.scraper_type == "PubMed":
                 scraper = PubMedScraper(email=self.email, api_key=self.api_key, search_term=self.search_term)
             elif self.scraper_type == "PubMedCentral":
                 scraper = PubMedCentralScraper(email=self.email, api_key=self.api_key, search_term=self.search_term)
             else:
+                logging.error(f"{self.__class__.__name__} encountered an unknown scraper type: {self.scraper_type}")
                 raise ValueError(f"Unknown scraper type: {self.scraper_type}")
     
             df = scraper.scrape(progress_callback=self.update_progress, mindate=self.mindate, maxdate=self.maxdate)
             if self.isInterruptionRequested():
+                logging.info(f"{self.__class__.__name__} was interrupted")
                 return
             self.scrapingCompleted.emit(df)
+            logging.info(f"{self.__class__.__name__} finished")
         except Exception as e:
+            logging.error(f"{self.__class__.__name__} encountered an unhandled exception: {str(e)}")
             self.scrapingError.emit(str(e))
-
+        
+        
     def update_progress(self, current, total):
         self.progressSignal.emit(current, total)
 
@@ -82,23 +119,29 @@ class RelatedArticlesThread(QThread):
         self.related_ids = related_ids
 
     def run(self):
+        logging.info(f"{self.__class__.__name__} started")
         try:
             if self.scraper_type == "PubMed":
                 scraper = PubMedScraper(email=self.email, api_key=self.api_key)
             elif self.scraper_type == "PubMedCentral":
                 scraper = PubMedCentralScraper(email=self.email, api_key=self.api_key)  # Assuming PubMedCentralScraper has a similar constructor
             else:
+                logging.error(f"{self.__class__.__name__} encountered an unknown scraper type: {self.scraper_type}")
                 raise ValueError(f"Unknown scraper type: {self.scraper_type}")
 
             # Use the fetch_related_articles method to get data
             df = scraper.fetch_elink_articles(self.related_ids)
             # Check for interruption request
             if self.isInterruptionRequested():
+                logging.info(f"{self.__class__.__name__} was interrupted")
                 return
             self.scrapingCompleted.emit(df)
+            logging.info(f"{self.__class__.__name__} finished")
         except Exception as e:
+            logging.error(f"{self.__class__.__name__} encountered an unhandled exception: {str(e)}")
             self.scrapingError.emit(str(e))  # Emit the error message
-
+        
+        
     def update_progress(self, current, total):
         self.progressSignal.emit(current, total)
 
@@ -114,15 +157,19 @@ class WoSScrapingThread(QThread):
         self.search_term = search_term
 
     def run(self):
+        logging.info(f"{self.__class__.__name__} started")
         try:
             scraper = WoSJournalScraper(api_key=self.api_key,search_term=self.search_term)
-            #pdb.set_trace()
             df = scraper.scrape(self.search_term)
+            # Check for interruption request
+            if self.isInterruptionRequested():
+                logging.info(f"{self.__class__.__name__} was interrupted")
+                return
             self.scrapingCompleted.emit(df)
         except Exception as e:
             logging.error(f"Error in WoSScrapingThread: {e}")
             self.scrapingError.emit(str(e))
-
+        
     def update_progress(self, current, total):
         self.progressSignal.emit(current, total)
         
@@ -278,45 +325,54 @@ class ScraperGUI(QWidget):
         
         self.scrape_button = QPushButton("Start Scraping", self)
         self.scrape_button.clicked.connect(self.start_scraping)
+        self.scrape_button.setObjectName("scrape_button")
         buttons_scrape.addWidget(self.scrape_button)
 
         
         self.stop_scrape_button = QPushButton("Stop Scraping", self)
         self.stop_scrape_button.clicked.connect(self.stop_scraping)
+        self.stop_scrape_button.setObjectName("stop_scrape_button")
         buttons_scrape.addWidget(self.stop_scrape_button)
 
 
         self.save_config_button = QPushButton("Save Config", self)
         self.save_config_button.clicked.connect(self.save_config)
+        self.save_config_button.setObjectName("save_config_button")
         buttons_config.addWidget(self.save_config_button)
 
 
         self.load_config_button = QPushButton("Load Config", self)
         self.load_config_button.clicked.connect(self.load_config)
+        self.load_config_button.setObjectName("load_config_button")
         buttons_config.addWidget(self.load_config_button)
 
         
         self.save_csv_button = QPushButton("Save to CSV", self)
         self.save_csv_button.clicked.connect(self.save_to_csv)
+        self.save_csv_button.setObjectName("save_csv_button")
         buttons_csv.addWidget(self.save_csv_button)
 
         
         self.load_csv_button = QPushButton("Load CSV", self)
         self.load_csv_button.clicked.connect(self.load_from_csv)
+        self.load_csv_button.setObjectName("load_csv_button")
         buttons_csv.addWidget(self.load_csv_button)
 
         
         self.view_df_button = QPushButton("View DataFrame in PandasGUI", self)
         self.view_df_button.clicked.connect(self.view_dataframe_in_pandasgui)
+        self.view_df_button.setObjectName("view_df_button")
         buttons_pandas.addWidget(self.view_df_button)
  
         
         self.preprocess_button = QPushButton("Preprocess Data", self)
         self.preprocess_button.clicked.connect(self.preprocess_data)
+        self.preprocess_button.setObjectName("preprocess_button")
         buttons_process.addWidget(self.preprocess_button)
         
         self.relatedarticles_button = QPushButton("Gather Related Articles", self)
         self.relatedarticles_button.clicked.connect(self.gather_related_articles)
+        self.relatedarticles_button.setObjectName("relatedarticles_button")
         buttons_process.addWidget(self.relatedarticles_button)
         
         # Organize button layout
@@ -351,67 +407,91 @@ class ScraperGUI(QWidget):
         self.setLayout(main_layout)
 
     def play_gif(self):
+        logging.info("Starting GIF...")
         self.movie.start()
 
     def stop_gif(self):
+        logging.info("Stopping GIF...")
         self.movie.stop()
 
     def change_message(self):
         # Randomly select a message from the list
+        logging.info("Changing loading message...")
         message = random.choice(self.loading_messages)
         self.message_label.setText(f"Llambit is {message}, please wait...")
         
         # Emit signal to start the animation
         self.messageChanged.emit()
 
+    def stop_message(self):
+        logging.info("Stopping loading message...")
+        self.message_label.setText("Llambit is done scraping!")
+        
     def start_animation(self):
-        self.animation_group.start()
+        logging.info("Generating new loading message...")
+        if not self.animation_group.state() == QPropertyAnimation.Running:
+            self.animation_group.start()
     
+    def stop_animation(self):
+        logging.info("Stopping loading messages...")
+        if self.animation_group.state() == QPropertyAnimation.Running:
+            self.animation_group.stop()
+            self.stop_message()  # Call stop_message to set final text
+    
+        else:
+            pass
+        
     def convert_WoS_query(self, query):
+        logging.info("Converting WoS query...")
         # Function to format individual components
-        def format_component(component):
+        def _format_component(component):
             if '"' in component:  # It's a phrase
+                logging.info("Found a phrase...")
                 stripped_phrase = component.strip('\"')
                 formatted_phrase = f"ALL=({stripped_phrase})"
-                print(f"Formatted phrase: {formatted_phrase}")
+                logging.info(f"Formatted phrase: {formatted_phrase}")
                 return formatted_phrase
             elif component.upper() in ['AND', 'OR', 'NOT']:  # Logical operator
-                print(f"Operator: {component}")
+                logging.info("Found an operator...")
+                logging.info(f"Operator: {component}")
                 return component
             else:  # Individual word
+                logging.info("Found a word...")
                 formatted_word = f"(ALL=({component}))"
-                print(f"Formatted word: {formatted_word}")
+                logging.info(f"Formatted word: {formatted_word}")
                 return formatted_word
         
         # Split the query into components (words, phrases, operators)
         components = re.findall(r'(".*?"|\b\w+\b)', query)
-        print(f"Components: {components}")
+        logging.info(f"Components: {components}")
         
         # Format each component and join them back together
-        formatted_query = ' '.join(format_component(comp) for comp in components)
-        print(f"Formatted query before handling ORs: {formatted_query}")
+        formatted_query = ' '.join(_format_component(comp) for comp in components)
+        logging.info(f"Formatted query before handling ORs: {formatted_query}")
         
         # Special handling for OR statements
         # Find the last occurrence of 'AND' and reformat everything after that
         last_and_index = formatted_query.rfind('AND')
-        print(f"Last AND index: {last_and_index}")
+        logging.info(f"Last AND index: {last_and_index}")
         if last_and_index != -1:
             before_last_and = formatted_query[:last_and_index]
             after_last_and = formatted_query[last_and_index:]
-            print(f"Before last AND: {before_last_and}")
-            print(f"After last AND: {after_last_and}")
+            logging.info(f"Before last AND: {before_last_and}")
+            logging.info(f"After last AND: {after_last_and}")
             or_statements = re.findall(r'ALL=\((.*?)\)', after_last_and)
-            print(f"OR statements: {or_statements}")
+            logging.info(f"OR statements: {or_statements}")
             if or_statements:
                 grouped_or_statements = ' OR '.join(f'({stmt})' for stmt in or_statements)
                 after_last_and = f'AND ALL=({grouped_or_statements})'
                 formatted_query = before_last_and + after_last_and
-                print(f"Formatted query after grouping ORs: {formatted_query}")
+                logging.info(f"Formatted query after grouping ORs: {formatted_query}")
 
         # Enclose the entire query in parentheses
         return f"({formatted_query})"
         
     def start_scraping(self, related_ids=None):
+        logging.info("Starting scraping...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         # Start the GIF animation
         self.movie.start()
         
@@ -476,6 +556,8 @@ class ScraperGUI(QWidget):
             
     def stop_scraping(self):
         # Request all running threads to stop
+        logging.info("Stoping scraping...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         for thread in self.threads:
             if thread.isRunning():
                 thread.requestInterruption()
@@ -493,13 +575,16 @@ class ScraperGUI(QWidget):
         QMessageBox.critical(self, "Error", f"An error occurred during scraping: {error_message}")
 
     def on_scraping_completed(self, df):
+        logging.info("Scraping is complete...")
         # Check if all threads have completed
         if all(not thread.isRunning() for thread in self.threads):
             # Stop the animation after scraping
             self.stop_gif()
-        
+            self.stop_animation()
+            
         # Check if the returned dataframe is not empty
         if not df.empty:
+            logging.info("Dataframe is not empty! Concatenating...")
             # Check if self.main_df exists and if not, initialize it with the new df
             if not hasattr(self, 'main_df') or self.main_df.empty:
                 self.main_df = df
@@ -517,6 +602,8 @@ class ScraperGUI(QWidget):
             QMessageBox.warning(self, "Warning", "No data was returned. Please check your search term or try again later.")
 
     def display_dataframe(self, df):
+        logging.info("Displaying dataframe...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         self.table.setRowCount(df.shape[0])
         self.table.setColumnCount(df.shape[1])
         self.table.setHorizontalHeaderLabels(df.columns)
@@ -529,11 +616,15 @@ class ScraperGUI(QWidget):
         self.table.setWordWrap(True)
 
     def save_to_csv(self):
+        logging.info("Saving to CSV...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         filepath, _ = QtWidgets.QFileDialog.getSaveFileName(self, "Save DataFrame", "", "CSV Files (*.csv);;All Files (*)")
         if filepath:
             self.main_df.to_csv(filepath, index=False)
     
     def load_from_csv(self):
+        logging.info("Loading from CSV...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         filepath, _ = QtWidgets.QFileDialog.getOpenFileName(self, "Load DataFrame", "", "CSV Files (*.csv);;All Files (*)")
         if filepath:
             try:
@@ -550,6 +641,8 @@ class ScraperGUI(QWidget):
                 QMessageBox.critical(self, "Error", f"Failed to load data. Error: {e}")
         
     def view_dataframe_in_pandasgui(self):
+        logging.info("Viewing dataframe in PandasGUI...")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         # Check if the main dataframe exists and is not empty
         if hasattr(self, 'main_df') and not self.main_df.empty:
             show(self.main_df)
@@ -557,6 +650,7 @@ class ScraperGUI(QWidget):
             QMessageBox.warning(self, "Warning", "No data available to display.")
 
     def save_config(self):
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         logging.debug("Entering save_config method.")
         
         # Check if hash_salt_storage.txt exists, if not, set a new passphrase
@@ -597,6 +691,7 @@ class ScraperGUI(QWidget):
 
     def load_config(self):
         logging.debug("Entering load_config method.")
+        logging.debug(f"User interacted with {self.sender().objectName()}")
         try:
             with open('config.json', 'r') as f:
                 config = json.load(f)
@@ -605,6 +700,7 @@ class ScraperGUI(QWidget):
                 
                 # If salt is not available, show a warning and return
                 if not salt:
+                    logging.warning("Salt was not found, config not loaded.")
                     QMessageBox.warning(self, "Warning", "Salt not found. Config not loaded.")
                     return
     
@@ -615,6 +711,7 @@ class ScraperGUI(QWidget):
                     decrypted_entrez_api_key = cipher.decrypt(config['entrez_api_key'].encode()).decode()
                     decrypted_wos_api_key = cipher.decrypt(config['wos_api_key'].encode()).decode()
                 except Fernet.InvalidToken:
+                    logging.warning("API decryption failure.")
                     QMessageBox.critical(self, "Error", "Failed to decrypt the API keys. Please ensure you're using the correct passphrase.")
                     return
                 if 'scrapers' in config:
@@ -632,8 +729,10 @@ class ScraperGUI(QWidget):
                 self.pubmed_central_checkbox.setChecked(config['scrapers']['pubmed_central'])
                 self.wos_checkbox.setChecked(config['scrapers']['wos'])
         except FileNotFoundError:
+            logging.warning("Config file was not found.")
             QMessageBox.warning(self, "Warning", "Config file not found!")
         except json.JSONDecodeError:
+            logging.warning("Decoding the config file failed.")
             QMessageBox.warning(self, "Warning", "Error decoding the config file!")
 
     def get_passphrase(self):
@@ -644,6 +743,7 @@ class ScraperGUI(QWidget):
         
         # Check if salt is not None
         if not salt:
+            logging.warning(f"{self.__class__.__name__}: Salt file is NONE.")
             return None
         
         while retry_count < max_retries:
@@ -653,11 +753,13 @@ class ScraperGUI(QWidget):
                 if hashed_passphrase == stored_hash:
                     return passphrase  # Return as string
                 else:
+                    logging.warning(f"{self.__class__.__name__}: Incorrect passphrase.")
                     QMessageBox.warning(self, "Warning", "Incorrect passphrase. Please try again.")
                     retry_count += 1
             else:
                 break
         if retry_count == max_retries:
+            logging.warning(f"{self.__class__.__name__}: Too many password attempts. Deleting config.")
             QMessageBox.critical(self, "Error", "Maximum retries reached. Deleting config file for security.")
             try:
                 os.remove('config.json')
@@ -675,13 +777,15 @@ class ScraperGUI(QWidget):
                 salt = stored_data[1].strip()
                 return stored_hash, salt
         except FileNotFoundError:
+            logging.warning(f"{self.__class__.__name__}: Hash and salt file missing.")
             QMessageBox.critical(self, "Error", "Hash and salt storage file not found!")
             return None, None
 
     def hash_passphrase_with_salt(self, passphrase, salt):
-        logging.debug(f"Hashing passphrase with salt: {salt}")
+        logging.debug("Hashing passphrase with salt")
         # Check if neither passphrase nor salt is None
         if passphrase is None or salt is None:
+            logging.warning(f"{self.__class__.__name__}: Passphrase or salt is none.")
             return None
         
         # Hash the passphrase with the given salt using SHA-256
@@ -689,7 +793,7 @@ class ScraperGUI(QWidget):
         return hashlib.sha256(salted_passphrase).hexdigest()
 
     def store_hash_and_salt(self, stored_hash, salt):
-        logging.debug(f"Storing hash: {stored_hash} and salt: {salt}")
+        logging.debug("Storing hash and salt..")
         # Store the hash and salt values in a file
         with open('hash_salt_storage.txt', 'w') as file:
             file.write(stored_hash + '\n')
@@ -709,7 +813,7 @@ class ScraperGUI(QWidget):
             self.store_hash_and_salt(stored_hash, salt)
             
     def derive_key_from_passphrase(self, passphrase, salt):
-        logging.debug(f"Deriving key from passphrase with salt: {salt}")
+        logging.debug("Deriving key from passphrase with salt..")
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -722,6 +826,7 @@ class ScraperGUI(QWidget):
 
 
     def update_progress(self, current, total):
+        logging.info("Updating progress...")
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(current)
         
@@ -754,6 +859,7 @@ class ScraperGUI(QWidget):
             self.progress_bar.setValue(self.progress_bar.maximum())
 
     def preprocess_data(self):
+        logging.info("Starting the preprocess routine...")
         self.preprocessor = ArticlePreprocessor()
         self.main_df = self.preprocessor.preprocess(self.main_df)
         
@@ -766,9 +872,11 @@ class ScraperGUI(QWidget):
             self.pmids = relevant_pubmed_ids
             QMessageBox.information(self, "Info", "Data preprocessed and queried successfully!")
         else:
+            logging.warning(f"{self.__class__.__name__}: No search term provided.")
             QMessageBox.warning(self, "Warning", "Please enter a search term before preprocessing.")
 
     def gather_related_articles(self):
+        logging.info("Gathering related articles...")
         self.search_related_articles = True
         self.start_scraping(related_ids=self.pmids)
 
@@ -778,6 +886,8 @@ class ScraperGUI(QWidget):
                                          "Scraping is in progress. Do you want to close the application?", 
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.Yes:
+                self.stop_animation()
+                self.stop_gif()
                 for thread in self.threads:
                     if thread.isRunning():
                         thread.requestInterruption()

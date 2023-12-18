@@ -16,6 +16,7 @@ import pdb
 
 class BaseScraper:
     def __init__(self, search_term, config={}):
+        logging.info(f"Initializing {self.__class__.__name__} with search term: {search_term}")
         self.search_term = search_term
         self.config = config
         self.setup_logging()
@@ -89,6 +90,7 @@ class EntrezScraper(BaseScraper):
     
     def __init__(self, search_term, email, api_key, dbase, config=None):  # Added dbase parameter
         super().__init__(search_term, config)
+        logging.info(f"Initializing {self.__class__.__name__} with search term: {search_term}")
         self.email = email
         self.api_key = api_key
         self.dbase = dbase  # Set the database as an instance variable
@@ -281,11 +283,13 @@ class EntrezScraper(BaseScraper):
 
 class PubMedScraper(EntrezScraper):
     def __init__(self, email, api_key, search_term=None, config=None):
+        logging.info(f"Initializing {self.__class__.__name__} with search term: {search_term}")
         super().__init__(search_term, email, api_key, dbase='pubmed', config=config)  # Set dbase to 'pubmed'
 
 
 class PubMedCentralScraper(EntrezScraper):
     def __init__(self, email, api_key, search_term=None, config=None):
+        logging.info(f"Initializing {self.__class__.__name__} with search term: {search_term}")
         super().__init__(search_term, email, api_key, dbase='pmc', config=config)  # Set dbase to 'pmc'
         
 class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its methods
@@ -300,6 +304,7 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
 
     def __init__(self, api_key, search_term, database_id='WOS'):
         super().__init__(search_term, api_key)
+        logging.info(f"Initializing {self.__class__.__name__} with search term: {search_term}")
         self.configuration = self.configure_api(api_key)
         self.search_api_instance = self.init_search_api()
         self.database_id = database_id
@@ -388,12 +393,13 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
         return data
     
     def scrape(self, query, progress_callback=None, max_records=None, **kwargs):
+        logging.info(f"Starting scrape operation in {self.__class__.__name__}")
         # Fetch articles based on the query
         search_results = self.fetch_articles(query)
         
         # Check if search results are empty
         if not search_results:
-            logging.error(f"No articles found for query: {query}")
+            logging.error(f"{self.__class__.__name__}: No articles found for query: {query}") 
             return pd.DataFrame()  # Return an empty DataFrame
         
         papers_data = []
@@ -408,5 +414,7 @@ class WoSJournalScraper(BaseScraper):  # Inherit from BaseScraper to utilize its
                 progress_callback(index + 1, len(search_results))
         
         df = pd.DataFrame(papers_data)
+        
+        logging.info(f"Scrape operation completed in {self.__class__.__name__}")
         
         return df

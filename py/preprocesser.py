@@ -12,7 +12,7 @@ import re
 from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
 import nltk
-
+import logging
 # Download necessary NLTK data only if not already present
 nltk.download('wordnet', quiet=True)
 nltk.download('stopwords', quiet=True)
@@ -51,6 +51,7 @@ class ArticlePreprocessor:
         """
         Preprocesses the provided DataFrame by cleaning the text and generating TF-IDF vectors.
         """
+        logging.info("Starting preprocessing of data")
         self.articles_df = df.copy()
     
         # Add a new column for Relevance Score
@@ -79,7 +80,9 @@ class ArticlePreprocessor:
     
         # Convert the cleaned text into TF-IDF vectors
         self.tfidf_matrix = self.vectorizer.fit_transform(self.articles_df['Combined Text'])
-
+        
+        logging.info("Completed preprocessing of data")
+        
         return self.articles_df
 
 
@@ -113,6 +116,7 @@ class ArticlePreprocessor:
         """
         Queries the articles based on the provided search query and returns the relevant articles.
         """
+        logging.info(f"Querying articles with: {query}")
         or_terms = self._parse_query(query)
         combined_scores = np.zeros(self.tfidf_matrix.shape[0])
 
@@ -133,7 +137,9 @@ class ArticlePreprocessor:
     
         # Extract PubMed IDs of relevant articles
         relevant_pubmed_ids = sorted_df['PubMed ID'].tolist()
-
+        
+        logging.info("Completed querying articles")
+        
         return sorted_df, relevant_pubmed_ids
     
     def gather_related_articles(self):
@@ -146,9 +152,14 @@ class ArticlePreprocessor:
 
         """
         
+        logging.info("Gathering related articles...")
+        
         existing_articles = self.articles_df["PubMed ID"]
         related_articles = self.articles_df["Related Articles"]
         
         # Flatten the list of related articles and remove duplicates
         all_related_articles = set(article_id for sublist in related_articles for article_id in sublist if article_id not in existing_articles)
+        
+        logging.info("Related articles gathered...")
+        
         return all_related_articles
