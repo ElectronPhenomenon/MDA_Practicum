@@ -1,6 +1,8 @@
 import csv
 import logging
 import time
+import html5lib
+import lxml
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import asyncio
@@ -61,7 +63,7 @@ class BaseScraper:
             tasks = [self.fetch(session, url, delay_time) for url in urls]
             return await asyncio.gather(*tasks)
 
-    def use_beautifulsoup(self, content, parser="xml"):
+    def use_beautifulsoup(self, content, parser="lxml"):
         """
         Parse the given content using BeautifulSoup and return the parsed object.
         

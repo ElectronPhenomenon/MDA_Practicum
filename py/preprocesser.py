@@ -40,6 +40,12 @@ class ArticlePreprocessor:
         """
         if not isinstance(text, (str, bytes)):
             return text
+        
+        # First, remove the [MeSH Terms] and [Filter] annotations using regex
+        text = re.sub(r'\[MeSH Terms(:noexp)?\]', '', text)
+        text = re.sub(r'\[Filter(:.+)?\]', '', text)
+        
+        # Remove non-alphabetical characters (keeping spaces)
         text = re.sub(r'[^a-zA-Z\s]', '', text, re.I | re.A)
         text = text.lower()
         tokens = text.split()
@@ -112,7 +118,7 @@ class ArticlePreprocessor:
         or_terms = [re.sub(r'[\"\(\)]', '', term) for term in or_terms]
         return or_terms
 
-    def query_articles(self, query, threshold=0.15):
+    def query_articles(self, query, threshold=0.10):
         """
         Queries the articles based on the provided search query and returns the relevant articles.
         """

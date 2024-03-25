@@ -13,7 +13,7 @@ import subprocess
 import os
 import pkg_resources
 import time
-required_packages = {'pandasgui', 'tqdm', 'pandas', 'nltk', 'beautifulsoup4', 'aiohttp', 'cryptography', 'pyqt5', 'scikit-learn', 'biopython', 'numpy'}
+required_packages = {'pandasgui', 'tqdm', 'pandas', 'nltk', 'beautifulsoup4', 'aiohttp', 'cryptography', 'pyqt5', 'scikit-learn', 'biopython', 'numpy', 'html5lib', 'lxml'}
 
 def check_install_dependencies():
     installed_packages = {pkg.key for pkg in pkg_resources.working_set}
